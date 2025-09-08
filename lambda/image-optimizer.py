@@ -1,14 +1,42 @@
+import os
+import boto3
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
+import tempfile
+import time
+import zipfile
 
-# --- load images ---
-ref = cv2.imread("reference.png")
-product = cv2.imread("small.png")
-ref_h, ref_w = ref.shape[:2]
+
+MAX_RETRIES = 5
+RETRY_DELAY = 2  # seconds
+s3 = boto3.client("s3")
+
+UPLOAD_BUCKET = "spio-images-uploads"
+OUTPUT_BUCKET = "spio-images-processing"
+
+def find_reference_for_batch(batch_id):
+    response = s3.list_objects_v2(
+        Bucket=UPLOAD_BUCKET,
+        Prefix=batch_id  # look for objects starting with batch_id
+    )
+    if "Contents" not in response:
+        return None
+    for obj in response["Contents"]:
+        key = obj["Key"]
+        if "reference" in key:
+            return key
+    return None
+
+def download_from_s3(bucket, key, local_path):
+    print(f"[DEBUG] Downloading s3://{bucket}/{key} → {local_path}")
+    s3.download_file(bucket, key, local_path)
+    return local_path
+
+def upload_to_s3(local_path, bucket, key):
+    print(f"[DEBUG] Uploading {local_path} → s3://{bucket}/{key}")
+    s3.upload_file(local_path, bucket, key)
 
 def detect_object(img):
-    """Return (diag, contour, centroid) for main object."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     thresh = cv2.adaptiveThreshold(
@@ -24,7 +52,6 @@ def detect_object(img):
     (cx, cy), (w_rot, h_rot), angle = rr
     diag = (w_rot**2 + h_rot**2) ** 0.5
 
-    # centroid
     M = cv2.moments(c)
     if M["m00"] != 0:
         cx = int(M["m10"]/M["m00"])
@@ -34,75 +61,137 @@ def detect_object(img):
 
     return diag, c, (cx, cy)
 
-# --- measure object sizes + positions ---
-ref_diag, ref_contour, ref_centroid = detect_object(ref)
-prod_diag, prod_contour, prod_centroid = detect_object(product)
+# 👇 Lambda entrypoint
+def lambda_handler(event, context):
+    print(f"[DEBUG] Event received: {event}")
 
-print("Reference diag:", ref_diag, "px")
-print("Product diag:", prod_diag, "px")
+    def find_reference_for_batch(batch_id):
+        """Search uploads bucket for reference image of a batch."""
+        try:
+            response = s3.list_objects_v2(
+                Bucket=UPLOAD_BUCKET,
+                Prefix=batch_id
+            )
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                if "reference" in key:
+                    return key
+        except Exception as e:
+            print(f"[ERROR] Failed to list objects for batch {batch_id}: {e}")
+        return None
 
-# --- compute scale factor ---
-scale_factor = ref_diag / prod_diag
-print("Scale factor:", scale_factor)
+    for record in event.get("Records", []):
+        bucket = record["s3"]["bucket"]["name"]
+        key = record["s3"]["object"]["key"]
 
-new_w = int(round(product.shape[1] * scale_factor))
-new_h = int(round(product.shape[0] * scale_factor))
-resized = cv2.resize(product, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        print(f"[DEBUG] Processing file: s3://{bucket}/{key}")
 
-# --- recalc centroid of scaled product ---
-# scale centroid coordinates as well
-scaled_centroid = (int(prod_centroid[0] * scale_factor),
-                   int(prod_centroid[1] * scale_factor))
+        filename = os.path.basename(key)
+        parts = filename.split("-")
+        batch_id = parts[0] if parts else "unknown_batch"
+        print(f"[DEBUG] Batch ID: {batch_id}")
 
-# --- align product centroid to reference centroid ---
-canvas = np.full((ref_h, ref_w, 3), 255, np.uint8)
+        tmp_input = os.path.join(tempfile.gettempdir(), filename)
+        try:
+            download_from_s3(bucket, key, tmp_input)
+        except Exception as e:
+            print(f"[ERROR] Failed to download {key}: {e}")
+            continue
 
-# shift calculation
-shift_x = ref_centroid[0] - scaled_centroid[0]
-shift_y = ref_centroid[1] - scaled_centroid[1]
+        if "reference" in filename:
+            try:
+                upload_to_s3(tmp_input, OUTPUT_BUCKET, f"{batch_id}/reference.png")
+                print(f"[DEBUG] Stored reference for batch {batch_id}")
+            except Exception as e:
+                print(f"[ERROR] Failed to upload reference for {batch_id}: {e}")
 
-x0 = shift_x
-y0 = shift_y
-
-# paste product carefully with boundaries
-x1 = max(0, x0)
-y1 = max(0, y0)
-x2 = min(ref_w, x0 + resized.shape[1])
-y2 = min(ref_h, y0 + resized.shape[0])
-
-roi_x1 = max(0, -x0)
-roi_y1 = max(0, -y0)
-roi_x2 = roi_x1 + (x2 - x1)
-roi_y2 = roi_y1 + (y2 - y1)
-
-canvas[y1:y2, x1:x2] = resized[roi_y1:roi_y2, roi_x1:roi_x2]
-
-final_img = canvas
-
-cv2.imwrite("scaled_product.jpg", final_img)
-
-# --- visualize ---
-vis_ref = ref.copy()
-cv2.drawContours(vis_ref, [ref_contour], -1, (0, 255, 0), 3)
-cv2.circle(vis_ref, ref_centroid, 6, (0, 0, 255), -1)
-
-vis_prod = product.copy()
-cv2.drawContours(vis_prod, [prod_contour], -1, (0, 255, 0), 3)
-cv2.circle(vis_prod, prod_centroid, 6, (0, 0, 255), -1)
-
-plt.figure(figsize=(15,5))
-plt.subplot(1,3,1)
-plt.imshow(cv2.cvtColor(vis_ref, cv2.COLOR_BGR2RGB))
-plt.title("Reference with centroid")
-plt.axis("off")
-
-plt.subplot(1,3,2)
-plt.imshow(cv2.cvtColor(vis_prod, cv2.COLOR_BGR2RGB))
-plt.title("Original product with centroid")
-plt.axis("off")
-
-plt.subplot(1,3,3)
-plt.imshow(cv2.cvtColor(final_img, cv2.COLOR_BGR2RGB))
-plt.title("Scaled + aligned product")
-plt.axis("off")
-plt.show()
+        elif "product" in filename:
+            # Dynamically find reference file in uploads
+            ref_key = find_reference_for_batch(batch_id)
+            if not ref_key:
+                print(f"[WARN] No reference found for batch {batch_id}, skipping batch.")
+                continue
+        
+            ref_path = os.path.join(tempfile.gettempdir(), f"{batch_id}_ref.png")
+            try:
+                download_from_s3(UPLOAD_BUCKET, ref_key, ref_path)
+                print(f"[DEBUG] Reference downloaded for batch {batch_id}")
+            except Exception as e:
+                print(f"[ERROR] Failed to download reference {ref_key}: {e}")
+                continue
+        
+            try:
+                ref = cv2.imread(ref_path)
+                if ref is None:
+                    raise RuntimeError("Reference image could not be read")
+                ref_h, ref_w = ref.shape[:2]
+                ref_diag, _, ref_centroid = detect_object(ref)
+            except Exception as e:
+                print(f"[ERROR] Failed to process reference for batch {batch_id}: {e}")
+                continue
+        
+            # 🔹 Process all product images in this batch
+            response = s3.list_objects_v2(Bucket=UPLOAD_BUCKET, Prefix=batch_id)
+            product_keys = [
+                obj["Key"] for obj in response.get("Contents", [])
+                if "product" in obj["Key"]
+            ]
+        
+            # Create a temporary zip file
+            zip_path = os.path.join(tempfile.gettempdir(), f"{batch_id}_scaled.zip")
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for prod_key in product_keys:
+                    prod_filename = os.path.basename(prod_key)
+                    tmp_prod_path = os.path.join(tempfile.gettempdir(), prod_filename)
+                    try:
+                        download_from_s3(UPLOAD_BUCKET, prod_key, tmp_prod_path)
+                        print(f"[DEBUG] Downloaded product {prod_filename} for batch {batch_id}")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to download {prod_key}: {e}")
+                        continue
+        
+                    try:
+                        product = cv2.imread(tmp_prod_path)
+                        if product is None:
+                            raise RuntimeError("Product image could not be read")
+        
+                        prod_diag, _, prod_centroid = detect_object(product)
+                        scale_factor = ref_diag / prod_diag
+                        new_w = int(round(product.shape[1] * scale_factor))
+                        new_h = int(round(product.shape[0] * scale_factor))
+                        resized = cv2.resize(product, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        
+                        scaled_centroid = (int(prod_centroid[0] * scale_factor),
+                                           int(prod_centroid[1] * scale_factor))
+        
+                        canvas = np.full((ref_h, ref_w, 3), 255, np.uint8)
+                        shift_x = ref_centroid[0] - scaled_centroid[0]
+                        shift_y = ref_centroid[1] - scaled_centroid[1]
+        
+                        x0, y0 = shift_x, shift_y
+                        x1, y1 = max(0, x0), max(0, y0)
+                        x2, y2 = min(ref_w, x0 + resized.shape[1]), min(ref_h, y0 + resized.shape[0])
+                        roi_x1, roi_y1 = max(0, -x0), max(0, -y0)
+                        roi_x2, roi_y2 = roi_x1 + (x2 - x1), roi_y1 + (y2 - y1)
+        
+                        canvas[y1:y2, x1:x2] = resized[roi_y1:roi_y2, roi_x1:roi_x2]
+        
+                        # Save the scaled product temporarily
+                        scaled_filename = f"scaled_{prod_filename}"
+                        tmp_scaled_path = os.path.join(tempfile.gettempdir(), scaled_filename)
+                        cv2.imwrite(tmp_scaled_path, canvas)
+        
+                        # Add to zip
+                        zipf.write(tmp_scaled_path, arcname=scaled_filename)
+                        print(f"[DEBUG] Added {scaled_filename} to batch zip {batch_id}")
+        
+                    except Exception as e:
+                        print(f"[ERROR] Failed to process product {prod_filename}: {e}")
+        
+            # Upload the zip
+            try:
+                upload_to_s3(zip_path, OUTPUT_BUCKET, f"{batch_id}/scaled/{batch_id}_scaled.zip")
+                print(f"[DEBUG] Uploaded zipped scaled products for batch {batch_id}")
+            except Exception as e:
+                print(f"[ERROR] Failed to upload zip for batch {batch_id}: {e}")
+        

@@ -1,8 +1,13 @@
 import React, { useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 
 export default function MainDiv() {
   const [reference, setReference] = useState(null);
   const [products, setProducts] = useState([]);
+  const [batchId] = useState(uuidv4()); // fixed per session/batch ✅
+  const [uploading, setUploading] = useState(false);
+  const [processing, setProcessing] = useState(false); // waiting for Lambda
+  const [downloadReady, setDownloadReady] = useState(false);
 
   const handleReferenceChange = (e) => {
     const file = e.target.files[0];
@@ -12,6 +17,81 @@ export default function MainDiv() {
   const handleProductsChange = (e) => {
     const files = Array.from(e.target.files);
     if (files.length) setProducts(files);
+  };
+
+  const uploadAll = async () => {
+    if (!reference && products.length === 0) {
+      alert("Please select at least one file first.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      // Upload reference first
+      if (reference) {
+        const refFilename = `${batchId}-reference-${reference.name}`;
+        await uploadFile(reference, refFilename);
+      }
+
+      // Upload all products
+      const productUploads = products.map((file, i) => {
+        const filename = `${batchId}-product-${i + 1}-${file.name}`;
+        return uploadFile(file, filename);
+      });
+      await Promise.all(productUploads);
+
+      alert("✅ All files uploaded successfully!");
+
+      // Start waiting for Lambda to process
+      setProcessing(true);
+      setTimeout(() => {
+        setProcessing(false);
+        setDownloadReady(true);
+      }, 10000); // wait 10s for Lambda to finish
+    } catch (err) {
+      console.error("Batch upload failed:", err);
+      alert("❌ Error uploading files");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const uploadFile = async (file, filename) => {
+    const res = await fetch(
+      `https://7j2iuj1858.execute-api.eu-central-1.amazonaws.com/Prod/spio-images-uploads/${encodeURIComponent(
+        filename
+      )}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      }
+    );
+
+    if (res.status < 200 || res.status >= 300) {
+      console.error(`Upload failed: ${filename} (${res.status})`);
+      throw new Error(`Upload failed: ${filename}`);
+    }
+
+    console.log("✅ Uploaded:", filename);
+  };
+
+  const downloadZip = () => {
+    let downloadId = batchId.split("-")[0];
+    const url = `https://spio-images-processing.s3.eu-central-1.amazonaws.com/${downloadId}/scaled/${downloadId}_scaled.zip`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${batchId}_scaled.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // Reset the form after download
+    setReference(null);
+    setProducts([]);
+    setDownloadReady(false);
   };
 
   return (
@@ -78,7 +158,6 @@ export default function MainDiv() {
               border: "2px dashed #d1d5db",
               borderRadius: "0.75rem",
               padding: "1.5rem",
-              transition: "0.2s border",
             }}
           >
             {reference ? (
@@ -87,7 +166,7 @@ export default function MainDiv() {
               </p>
             ) : (
               <p style={{ color: "#6b7280" }}>
-                Click to upload a reference image
+                Click to select a reference image
               </p>
             )}
           </div>
@@ -95,7 +174,11 @@ export default function MainDiv() {
 
         {/* Product Images Upload */}
         <label
-          style={{ display: "block", marginBottom: "1rem", cursor: "pointer" }}
+          style={{
+            display: "block",
+            marginBottom: "1.5rem",
+            cursor: "pointer",
+          }}
         >
           <span
             style={{
@@ -119,7 +202,6 @@ export default function MainDiv() {
               border: "2px dashed #d1d5db",
               borderRadius: "0.75rem",
               padding: "1.5rem",
-              transition: "0.2s border",
             }}
           >
             {products.length > 0 ? (
@@ -127,10 +209,52 @@ export default function MainDiv() {
                 {products.length} file(s) selected
               </p>
             ) : (
-              <p style={{ color: "#6b7280" }}>Click to upload product images</p>
+              <p style={{ color: "#6b7280" }}>Click to select product images</p>
             )}
           </div>
         </label>
+
+        {/* Upload All Button */}
+        <button
+          onClick={uploadAll}
+          disabled={uploading || processing}
+          style={{
+            backgroundColor: uploading || processing ? "#9ca3af" : "#2563eb",
+            color: "#fff",
+            fontWeight: "bold",
+            padding: "0.75rem 1.5rem",
+            borderRadius: "0.5rem",
+            cursor: uploading || processing ? "not-allowed" : "pointer",
+            width: "100%",
+            transition: "background 0.2s",
+            marginBottom: "1rem",
+          }}
+        >
+          {uploading
+            ? "Uploading..."
+            : processing
+            ? "Processing..."
+            : "Upload All"}
+        </button>
+
+        {/* Download Zip Button */}
+        {downloadReady && (
+          <button
+            onClick={downloadZip}
+            style={{
+              backgroundColor: "#16a34a",
+              color: "#fff",
+              fontWeight: "bold",
+              padding: "0.75rem 1.5rem",
+              borderRadius: "0.5rem",
+              cursor: "pointer",
+              width: "100%",
+              transition: "background 0.2s",
+            }}
+          >
+            Download Scaled Batch
+          </button>
+        )}
       </div>
     </div>
   );
