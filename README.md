@@ -1,70 +1,67 @@
-# Getting Started with Create React App
+# SPIO - Serverless Product Image Optimizer
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+**Final Project for Manara Cloud Course: AWS 2 – Becoming a Solutions Architect**
 
-## Available Scripts
+This project is designed to help e-commerce businesses optimize their product images. Often, in large batches, some photos of identical packages are misplaced, zoomed incorrectly, or misaligned. 
 
-In the project directory, you can run:
+The website works by allowing the user to **select a reference image** for a product. All other images in the batch are then automatically rescaled, centered, and aligned to match the reference. This ensures uniformity across the product catalog.  
 
-### `npm start`
+The image processing is powered by **OpenCV**, which handles tasks such as:
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- Detecting the main object in the reference image.  
+- Rescaling other images to match the reference dimensions.  
+- Centering and aligning the product within the frame.  
+- Correcting minor rotations or shifts to achieve a consistent look.  
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+With a single click, users get a **fully optimized batch of product images** that are standardized, professional, and ready for upload to e-commerce platforms.
 
-### `npm test`
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+---
 
-### `npm run build`
+## **Solution Overview**
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+![AWS Solution Diagram](./AWS_Flow.jpg)  
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+---
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## **Live Demo**
 
-### `npm run eject`
+Try the project live on S3:  
+[Live Demo Link](https://spio-frontend-host.s3.eu-central-1.amazonaws.com/index.html)
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+---
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## **AWS Services Used**
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+- **API Gateway** – Exposes endpoints for image uploads and processing  
+- **S3 Buckets** – Stores original and optimized product images  
+- **AWS Lambda** – Processes images serverlessly  
+- **AWS IAM** – Manages access permissions and security
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+---
 
-## Learn More
+## **Technologies & Tools Used**
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+- **Python** – Core language for the backend image processing.  
+- **OpenCV** – Handles image detection, rescaling, centering, and alignment.  
+- **NumPy** – Used for numerical operations on image data.  
+- **React** – Frontend framework for the website interface, enabling users to upload images and see results interactively.  
+- **Docker** – Dockerfile is used to build custom AWS Lambda layers for the backend, ensuring all dependencies are packaged and deployed smoothly.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+---
 
-### Code Splitting
+## **How It Works**
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+1. **Upload a reference image** – This image serves as the template for resizing and centering.  
+2. **Upload one or more product images** – These are the images that need optimization.  
+3. **Send to S3** – All images are uploaded to a designated S3 bucket.  
+4. **Lambda processing** – AWS Lambda functions automatically rescale, center, and optimize the images based on the reference.  
+5. **Save results** – Optimized images are stored in a separate S3 bucket.  
+6. **Download optimized images** – Users can download the fully processed images directly from S3.  
 
-### Analyzing the Bundle Size
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Save time, ensure consistency, and improve the quality of your product image catalog.
 
-### Making a Progressive Web App
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+*Created as part of the Manara Cloud AWS Solutions Architect course.*
