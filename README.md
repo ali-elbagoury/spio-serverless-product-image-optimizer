@@ -64,4 +64,15 @@ Save time, ensure consistency, and improve the quality of your product image cat
 
 ---
 
+## **Constraints** 
+
+1. Images must have a single object to be able to detect it.
+2. Background must be clear, not necesseraily white, but a clear background.
+
+Here are photos to test with
+[Reference](./lambda/ref.png)
+[Product 1](./lambda/1.png)
+[Product 2](./lambda/2.png)
+[Product 3](./lambda/3.png)
+
 *Created as part of the Manara Cloud AWS Solutions Architect course.*
